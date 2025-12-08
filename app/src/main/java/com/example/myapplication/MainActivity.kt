@@ -6,7 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -67,11 +67,14 @@ import com.example.myapplication.ui.components.SwipeToDeleteContainer
 import com.example.myapplication.ui.components.FormattedRecipeText
 import com.example.myapplication.notification.NotificationHelper
 import com.example.myapplication.notification.ExpiryCheckWorker
+import com.example.myapplication.auth.User
+import com.example.myapplication.auth.UserPreferences
+import com.example.myapplication.ui.screens.LoginScreen
 
 const val TAG = "SmartFridgeApp"
 
 // --- Activity ---
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -115,12 +118,18 @@ fun SmartFridgeApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
+    
+    val userPreferences = remember { UserPreferences(context) }
+    var currentUser by remember { mutableStateOf(userPreferences.getCurrentUser()) }
+    
+    // DBHelper is created with current user ID for data isolation
+    val dbHelper = remember(currentUser?.id) { 
+        DBHelper(context, currentUser?.id) 
+    }
 
-    val dbHelper = remember { DBHelper(context) }
-
-    var foodList by remember { mutableStateOf(dbHelper.getAllFoods().sortedBy { it.expiryDate }) }
-    var storageAreas by remember { mutableStateOf(dbHelper.getAllAreas()) }
-    var savedRecipes by remember { mutableStateOf(dbHelper.getAllRecipes()) }
+    var foodList by remember(currentUser?.id) { mutableStateOf(dbHelper.getAllFoods().sortedBy { it.expiryDate }) }
+    var storageAreas by remember(currentUser?.id) { mutableStateOf(dbHelper.getAllAreas()) }
+    var savedRecipes by remember(currentUser?.id) { mutableStateOf(dbHelper.getAllRecipes()) }
 
     fun refreshData() {
         foodList = dbHelper.getAllFoods().sortedBy { it.expiryDate }
@@ -189,6 +198,17 @@ fun SmartFridgeApp() {
         cameraLauncher.launch(tempUri!!)
     }}
 
+    // Show login screen if no user is logged in
+    if (currentUser == null) {
+        LoginScreen(
+            userPreferences = userPreferences,
+            onLoginSuccess = { user ->
+                currentUser = user
+            }
+        )
+        return
+    }
+
     Scaffold(
         bottomBar = { BottomNavigationBar(navController) }
     ) { padding ->
@@ -237,10 +257,15 @@ fun SmartFridgeApp() {
             }
             composable("settings") {
                 SettingsScreen(
+                    currentUser = currentUser,
                     areas = storageAreas,
                     onAddArea = { name -> dbHelper.addArea(StorageArea(name = name)); refreshData() },
                     onUpdateArea = { area -> dbHelper.updateArea(area); refreshData() },
-                    onDeleteArea = { id -> dbHelper.deleteArea(id); refreshData() }
+                    onDeleteArea = { id -> dbHelper.deleteArea(id); refreshData() },
+                    onLogout = {
+                        userPreferences.logout()
+                        currentUser = null
+                    }
                 )
             }
         }
@@ -655,7 +680,14 @@ fun RecipeDetailScreen(recipe: Recipe, onBack: () -> Unit) {
 // --- Settings Screen ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(areas: List<StorageArea>, onAddArea: (String) -> Unit, onUpdateArea: (StorageArea) -> Unit, onDeleteArea: (String) -> Unit) {
+fun SettingsScreen(
+    currentUser: User?,
+    areas: List<StorageArea>,
+    onAddArea: (String) -> Unit,
+    onUpdateArea: (StorageArea) -> Unit,
+    onDeleteArea: (String) -> Unit,
+    onLogout: () -> Unit
+) {
     var newArea by remember { mutableStateOf("") }
     var editingArea by remember { mutableStateOf<StorageArea?>(null) }
 
@@ -664,6 +696,56 @@ fun SettingsScreen(areas: List<StorageArea>, onAddArea: (String) -> Unit, onUpda
             title = { Text("Settings", fontWeight = FontWeight.Bold) },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent)
         )
+        
+        // User Profile Card
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            colors = CardDefaults.cardColors(containerColor = PrimaryGreen.copy(alpha = 0.1f))
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Avatar
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(PrimaryGreen, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        currentUser?.name?.take(1)?.uppercase() ?: "?",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        currentUser?.name ?: "Unknown",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Logged in",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PrimaryGreen
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onLogout,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Icon(Icons.Default.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Logout")
+                }
+            }
+        }
 
         Card(
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),

@@ -65,4 +65,7 @@ dependencies {
     
     // WorkManager for background tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    
+    // Biometric authentication
+    implementation("androidx.biometric:biometric:1.1.0")
 }

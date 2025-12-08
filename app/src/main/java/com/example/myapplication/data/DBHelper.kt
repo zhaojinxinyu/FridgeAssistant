@@ -8,8 +8,14 @@ import java.util.UUID
 
 /**
  * SQLite database helper for managing food items, storage areas, and recipes
+ * Each user gets their own database file for data isolation.
  */
-class DBHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+class DBHelper(context: Context, userId: String? = null) : SQLiteOpenHelper(
+    context, 
+    if (userId != null) "Fridge_$userId.db" else DATABASE_NAME, 
+    null, 
+    DATABASE_VERSION
+) {
 
     companion object {
         private const val DATABASE_NAME = "Fridge.db"
