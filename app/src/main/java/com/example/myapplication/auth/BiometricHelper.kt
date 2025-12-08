@@ -7,17 +7,25 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 
 /**
- * Helper class for biometric authentication (fingerprint/face)
+ * Helper class for biometric and device credential authentication
+ * Supports fingerprint, face recognition, PIN, pattern, and password
  */
 class BiometricHelper(private val activity: FragmentActivity) {
     
     private val biometricManager = BiometricManager.from(activity)
     
+    companion object {
+        // Allow biometric + device credential (PIN/pattern/password)
+        private const val AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG or 
+            BiometricManager.Authenticators.BIOMETRIC_WEAK or 
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+    }
+    
     /**
-     * Check if biometric authentication is available
+     * Check if any authentication method is available
      */
     fun isBiometricAvailable(): BiometricStatus {
-        return when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)) {
+        return when (biometricManager.canAuthenticate(AUTHENTICATORS)) {
             BiometricManager.BIOMETRIC_SUCCESS -> BiometricStatus.AVAILABLE
             BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> BiometricStatus.NO_HARDWARE
             BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> BiometricStatus.HARDWARE_UNAVAILABLE
@@ -27,12 +35,11 @@ class BiometricHelper(private val activity: FragmentActivity) {
     }
     
     /**
-     * Show biometric authentication prompt
+     * Show authentication prompt (biometric or device credential)
      */
     fun authenticate(
         title: String = "Authenticate",
-        subtitle: String = "Use your fingerprint or face to login",
-        negativeButtonText: String = "Cancel",
+        subtitle: String = "Use fingerprint, face, or PIN to login",
         onSuccess: () -> Unit,
         onError: (String) -> Unit,
         onFailed: () -> Unit
@@ -61,8 +68,8 @@ class BiometricHelper(private val activity: FragmentActivity) {
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
-            .setNegativeButtonText(negativeButtonText)
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
+            .setAllowedAuthenticators(AUTHENTICATORS)
+            // Note: setNegativeButtonText cannot be used with DEVICE_CREDENTIAL
             .build()
         
         biometricPrompt.authenticate(promptInfo)

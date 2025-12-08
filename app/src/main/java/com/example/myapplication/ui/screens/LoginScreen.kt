@@ -62,7 +62,7 @@ fun LoginScreen(
             BiometricHelper.BiometricStatus.AVAILABLE -> {
                 helper.authenticate(
                     title = "Welcome back, ${user.name}",
-                    subtitle = "Authenticate to access your fridge",
+                    subtitle = "Use fingerprint, face, or PIN to login",
                     onSuccess = {
                         userPreferences.setCurrentUserId(user.id)
                         onLoginSuccess(user)
