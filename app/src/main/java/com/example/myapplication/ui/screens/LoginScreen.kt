@@ -39,7 +39,8 @@ fun LoginScreen(
     
     var users by remember { mutableStateOf(userPreferences.getUsers()) }
     var showAddUserDialog by remember { mutableStateOf(false) }
-    var selectedUser by remember { mutableStateOf<User?>(null) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var userToDelete by remember { mutableStateOf<User?>(null) }
     var biometricStatus by remember { mutableStateOf<BiometricHelper.BiometricStatus?>(null) }
     
     // Check biometric availability
@@ -86,6 +87,41 @@ fun LoginScreen(
                 Toast.makeText(context, "Biometric not available. Logging in directly.", Toast.LENGTH_SHORT).show()
                 userPreferences.setCurrentUserId(user.id)
                 onLoginSuccess(user)
+            }
+        }
+    }
+    
+    fun deleteUserWithAuth(user: User) {
+        if (activity == null) {
+            Toast.makeText(context, "Error: Activity not available", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val helper = BiometricHelper(activity)
+        
+        when (helper.isBiometricAvailable()) {
+            BiometricHelper.BiometricStatus.AVAILABLE -> {
+                helper.authenticate(
+                    title = "Delete ${user.name}?",
+                    subtitle = "Authenticate to confirm deletion",
+                    onSuccess = {
+                        userPreferences.deleteUser(user.id)
+                        users = userPreferences.getUsers()
+                        Toast.makeText(context, "User deleted", Toast.LENGTH_SHORT).show()
+                        showDeleteConfirmDialog = false
+                        userToDelete = null
+                    },
+                    onError = { error ->
+                        Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+                    },
+                    onFailed = {
+                        Toast.makeText(context, "Authentication failed", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+            else -> {
+                // If no auth available, still allow delete but show warning
+                Toast.makeText(context, "No authentication. Please set up screen lock.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -187,7 +223,11 @@ fun LoginScreen(
                     items(users) { user ->
                         UserCard(
                             user = user,
-                            onClick = { authenticateUser(user) }
+                            onClick = { authenticateUser(user) },
+                            onDeleteClick = {
+                                userToDelete = user
+                                showDeleteConfirmDialog = true
+                            }
                         )
                     }
                 }
@@ -256,12 +296,54 @@ fun LoginScreen(
             }
         )
     }
+    
+    // Delete Confirmation Dialog
+    if (showDeleteConfirmDialog && userToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { 
+                showDeleteConfirmDialog = false
+                userToDelete = null
+            },
+            icon = {
+                Icon(
+                    Icons.Default.DeleteForever,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = { Text("Delete User?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Are you sure you want to delete \"${userToDelete?.name}\"?\n\nThis will also delete all their fridge data. You will need to authenticate to confirm."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { userToDelete?.let { deleteUserWithAuth(it) } },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    showDeleteConfirmDialog = false
+                    userToDelete = null
+                }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun UserCard(
     user: User,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDeleteClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -307,6 +389,19 @@ private fun UserCard(
                     "Tap to login",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            
+            // Delete button
+            IconButton(
+                onClick = onDeleteClick,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete user",
+                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                    modifier = Modifier.size(22.dp)
                 )
             }
             
