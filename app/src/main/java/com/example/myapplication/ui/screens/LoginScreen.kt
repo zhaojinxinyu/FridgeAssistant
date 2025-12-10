@@ -4,8 +4,6 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.appcompat.app.AppCompatActivity
+import com.google.firebase.auth.FirebaseAuth
 import com.example.myapplication.auth.BiometricHelper
 import com.example.myapplication.auth.User
 import com.example.myapplication.auth.UserPreferences
@@ -36,117 +35,110 @@ fun LoginScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? AppCompatActivity
-    
-    var users by remember { mutableStateOf(userPreferences.getUsers()) }
-    var showAddUserDialog by remember { mutableStateOf(false) }
-    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-    var userToDelete by remember { mutableStateOf<User?>(null) }
+
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
+    var isLoginMode by remember { mutableStateOf(true) }
+    var isProcessing by remember { mutableStateOf(false) }
+
+    val auth = FirebaseAuth.getInstance()
+
+    // If previously logged in → use biometric
+    val savedUser = userPreferences.getCurrentUser()
     var biometricStatus by remember { mutableStateOf<BiometricHelper.BiometricStatus?>(null) }
-    
-    // Check biometric availability
+
     LaunchedEffect(Unit) {
         activity?.let {
-            val helper = BiometricHelper(it)
-            biometricStatus = helper.isBiometricAvailable()
+            biometricStatus = BiometricHelper(it).isBiometricAvailable()
         }
     }
-    
-    fun authenticateUser(user: User) {
-        if (activity == null) {
-            Toast.makeText(context, "Error: Activity not available", Toast.LENGTH_SHORT).show()
+
+    fun doBiometricLogin() {
+        if (activity == null || savedUser == null) return
+
+        val helper = BiometricHelper(activity)
+        helper.authenticate(
+            title = "Welcome back",
+            subtitle = "Use biometric to log in",
+            onSuccess = {
+                onLoginSuccess(savedUser)
+            },
+            onError = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+            onFailed = { Toast.makeText(context, "Authentication failed", Toast.LENGTH_SHORT).show() }
+        )
+    }
+
+    // If a user exists → auto-show biometric login dialog
+    LaunchedEffect(savedUser) {
+        if (savedUser != null && biometricStatus == BiometricHelper.BiometricStatus.AVAILABLE) {
+            doBiometricLogin()
+        }
+    }
+
+    fun loginWithEmail() {
+        if (email.isBlank() || password.isBlank()) {
+            Toast.makeText(context, "Email and password required", Toast.LENGTH_SHORT).show()
             return
         }
-        
-        val helper = BiometricHelper(activity)
-        
-        when (helper.isBiometricAvailable()) {
-            BiometricHelper.BiometricStatus.AVAILABLE -> {
-                helper.authenticate(
-                    title = "Welcome back, ${user.name}",
-                    subtitle = "Use fingerprint, face, or PIN to login",
-                    onSuccess = {
-                        userPreferences.setCurrentUserId(user.id)
-                        onLoginSuccess(user)
-                    },
-                    onError = { error ->
-                        Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
-                    },
-                    onFailed = {
-                        Toast.makeText(context, "Authentication failed", Toast.LENGTH_SHORT).show()
-                    }
-                )
+
+        isProcessing = true
+        auth.signInWithEmailAndPassword(email.trim(), password)
+            .addOnSuccessListener { result ->
+                isProcessing = false
+                val user = result.user!!
+                val u = User(id = user.uid, name = user.email ?: "Unknown")
+                userPreferences.saveUser(u)
+                onLoginSuccess(u)
             }
-            BiometricHelper.BiometricStatus.NOT_ENROLLED -> {
-                // Allow login without biometric if not enrolled
-                Toast.makeText(context, "No biometric enrolled. Logging in directly.", Toast.LENGTH_SHORT).show()
-                userPreferences.setCurrentUserId(user.id)
-                onLoginSuccess(user)
+            .addOnFailureListener {
+                isProcessing = false
+                Toast.makeText(context, it.message, Toast.LENGTH_SHORT).show()
             }
-            else -> {
-                // Allow login without biometric on unsupported devices
-                Toast.makeText(context, "Biometric not available. Logging in directly.", Toast.LENGTH_SHORT).show()
-                userPreferences.setCurrentUserId(user.id)
-                onLoginSuccess(user)
-            }
-        }
     }
-    
-    fun deleteUserWithAuth(user: User) {
-        if (activity == null) {
-            Toast.makeText(context, "Error: Activity not available", Toast.LENGTH_SHORT).show()
+
+    fun registerAccount() {
+        if (email.isBlank() || password.isBlank()) {
+            Toast.makeText(context, "Email and password required", Toast.LENGTH_SHORT).show()
             return
         }
-        
-        val helper = BiometricHelper(activity)
-        
-        when (helper.isBiometricAvailable()) {
-            BiometricHelper.BiometricStatus.AVAILABLE -> {
-                helper.authenticate(
-                    title = "Delete ${user.name}?",
-                    subtitle = "Authenticate to confirm deletion",
-                    onSuccess = {
-                        userPreferences.deleteUser(user.id)
-                        users = userPreferences.getUsers()
-                        Toast.makeText(context, "User deleted", Toast.LENGTH_SHORT).show()
-                        showDeleteConfirmDialog = false
-                        userToDelete = null
-                    },
-                    onError = { error ->
-                        Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
-                    },
-                    onFailed = {
-                        Toast.makeText(context, "Authentication failed", Toast.LENGTH_SHORT).show()
-                    }
-                )
+
+        isProcessing = true
+        auth.createUserWithEmailAndPassword(email.trim(), password)
+            .addOnSuccessListener { result ->
+                isProcessing = false
+                val user = result.user!!
+                val u = User(id = user.uid, name = user.email ?: "Unknown")
+                userPreferences.saveUser(u)
+                onLoginSuccess(u)
             }
-            else -> {
-                // If no auth available, still allow delete but show warning
-                Toast.makeText(context, "No authentication. Please set up screen lock.", Toast.LENGTH_LONG).show()
+            .addOnFailureListener {
+                isProcessing = false
+                Toast.makeText(context, it.message, Toast.LENGTH_SHORT).show()
             }
-        }
     }
-    
+
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(
+                    listOf(
                         PrimaryGreen.copy(alpha = 0.1f),
                         MaterialTheme.colorScheme.background
                     )
                 )
             )
     ) {
+
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
+            Modifier.fillMaxSize().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(60.dp))
-            
-            // App Icon
+            Spacer(Modifier.height(60.dp))
+
+            // App icon
             Box(
                 modifier = Modifier
                     .size(100.dp)
@@ -154,322 +146,77 @@ fun LoginScreen(
                     .background(PrimaryGreen),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Default.Kitchen,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(50.dp)
-                )
+                Icon(Icons.Default.Kitchen, contentDescription = null, tint = Color.White, modifier = Modifier.size(50.dp))
             }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
+
+            Spacer(Modifier.height(32.dp))
+
+            Text("Smart Fridge", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = PrimaryGreen)
             Text(
-                "Smart Fridge",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold,
-                color = PrimaryGreen
-            )
-            
-            Text(
-                "Select your profile to continue",
-                style = MaterialTheme.typography.bodyMedium,
+                if (isLoginMode) "Sign in to continue" else "Create a new account",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            
-            Spacer(modifier = Modifier.height(40.dp))
-            
-            // User List
-            if (users.isEmpty()) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            Icons.Default.PersonAdd,
-                            contentDescription = null,
-                            tint = PrimaryGreen,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "No users yet",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            "Create your first profile to get started",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(users) { user ->
-                        UserCard(
-                            user = user,
-                            onClick = { authenticateUser(user) },
-                            onDeleteClick = {
-                                userToDelete = user
-                                showDeleteConfirmDialog = true
-                            }
-                        )
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Add User Button
-            Button(
-                onClick = { showAddUserDialog = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen)
-            ) {
-                Icon(Icons.Default.PersonAdd, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Add New User", fontSize = 16.sp)
-            }
-            
-            // Biometric status indicator
-            biometricStatus?.let { status ->
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(
-                        when (status) {
-                            BiometricHelper.BiometricStatus.AVAILABLE -> Icons.Default.Fingerprint
-                            else -> Icons.Default.Warning
-                        },
-                        contentDescription = null,
-                        tint = when (status) {
-                            BiometricHelper.BiometricStatus.AVAILABLE -> PrimaryGreen
-                            else -> MaterialTheme.colorScheme.error
-                        },
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        when (status) {
-                            BiometricHelper.BiometricStatus.AVAILABLE -> "Biometric authentication ready"
-                            BiometricHelper.BiometricStatus.NOT_ENROLLED -> "No biometric enrolled"
-                            BiometricHelper.BiometricStatus.NO_HARDWARE -> "No biometric hardware"
-                            else -> "Biometric unavailable"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
-    
-    // Add User Dialog
-    if (showAddUserDialog) {
-        AddUserDialog(
-            onDismiss = { showAddUserDialog = false },
-            onAdd = { name ->
-                val newUser = User(name = name)
-                userPreferences.addUser(newUser)
-                users = userPreferences.getUsers()
-                showAddUserDialog = false
-            }
-        )
-    }
-    
-    // Delete Confirmation Dialog
-    if (showDeleteConfirmDialog && userToDelete != null) {
-        AlertDialog(
-            onDismissRequest = { 
-                showDeleteConfirmDialog = false
-                userToDelete = null
-            },
-            icon = {
-                Icon(
-                    Icons.Default.DeleteForever,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
-                )
-            },
-            title = { Text("Delete User?", fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "Are you sure you want to delete \"${userToDelete?.name}\"?\n\nThis will also delete all their fridge data. You will need to authenticate to confirm."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { userToDelete?.let { deleteUserWithAuth(it) } },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { 
-                    showDeleteConfirmDialog = false
-                    userToDelete = null
-                }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-}
 
-@Composable
-private fun UserCard(
-    user: User,
-    onClick: () -> Unit,
-    onDeleteClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Avatar
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(PrimaryGreen.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    user.name.take(1).uppercase(),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = PrimaryGreen
-                )
-            }
-            
-            Spacer(modifier = Modifier.width(16.dp))
-            
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    user.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    "Tap to login",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
-            // Delete button
-            IconButton(
-                onClick = onDeleteClick,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete user",
-                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-            
-            Icon(
-                Icons.Default.Fingerprint,
-                contentDescription = "Login",
-                tint = PrimaryGreen,
-                modifier = Modifier.size(28.dp)
+            Spacer(Modifier.height(40.dp))
+
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text("Email") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp)
             )
-        }
-    }
-}
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AddUserDialog(
-    onDismiss: () -> Unit,
-    onAdd: (String) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    var nameError by remember { mutableStateOf(false) }
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.PersonAdd, contentDescription = null, tint = PrimaryGreen) },
-        title = { Text("Create Profile", fontWeight = FontWeight.Bold) },
-        text = {
-            Column {
-                Text(
-                    "Enter your name to create a personal profile with separate data.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { 
-                        name = it
-                        nameError = it.isBlank()
-                    },
-                    label = { Text("Your Name") },
-                    placeholder = { Text("e.g., Mom, Dad, Guest") },
-                    isError = nameError,
-                    supportingText = if (nameError) {{ Text("Name is required") }} else null,
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-            }
-        },
-        confirmButton = {
+            Spacer(Modifier.height(24.dp))
+
             Button(
                 onClick = {
-                    if (name.isBlank()) {
-                        nameError = true
-                    } else {
-                        onAdd(name.trim())
-                    }
+                    if (isLoginMode) loginWithEmail()
+                    else registerAccount()
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen)
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                enabled = !isProcessing
             ) {
-                Text("Create")
+                if (isProcessing) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(22.dp))
+                } else {
+                    Text(if (isLoginMode) "Login" else "Register", fontSize = 18.sp)
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
+
+            Spacer(Modifier.height(16.dp))
+
+            TextButton(onClick = { isLoginMode = !isLoginMode }) {
+                Text(
+                    if (isLoginMode) "Don't have an account? Register"
+                    else "Already have an account? Login"
+                )
+            }
+
+            // Optional biometric login button
+            if (savedUser != null && biometricStatus == BiometricHelper.BiometricStatus.AVAILABLE) {
+                Spacer(Modifier.height(20.dp))
+                FilledTonalButton(
+                    onClick = { doBiometricLogin() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Fingerprint, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Use Biometric Login")
+                }
             }
         }
-    )
+    }
 }

@@ -1,8 +1,8 @@
 package com.example.myapplication.ai
 
+import android.util.Log
 import com.example.myapplication.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.content
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -19,81 +19,60 @@ private val generativeModel by lazy {
 object AIService {
 
     /**
-     * Process OCR text from a receipt and extract food item names
-     */
-    suspend fun cleanReceiptData(rawText: String): List<String> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val prompt = content {
-                    text(
-                        "Analyze this Korean receipt OCR text:\n$rawText\n" +
-                                "Extract ONLY food items, drinks, and condiments.\n" +
-                                "Translate to English.\n" +
-                                "Output comma-separated list ONLY. No numbers, prices, or extra words."
-                    )
-                }
-                val response = generativeModel.generateContent(prompt)
-                response.text?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-            } catch (e: Exception) {
-                emptyList()
-            }
-        }
-    }
-
-    /**
      * Generate a full recipe for a given dish name
      */
-    suspend fun generateFullRecipe(dishName: String): String {
-        return withContext(Dispatchers.IO) {
+    suspend fun generateFullRecipe(dishName: String): String =
+        withContext(Dispatchers.IO) {
             try {
-                val prompt = content {
-                    text(
-                        "Create a practical cooking recipe for '$dishName'.\n" +
-                                "Strictly follow this format in English:\n\n" +
-                                "**Ingredients & Seasonings:**\n" +
-                                "[List detailed ingredients and seasonings with quantities]\n\n" +
-                                "**Missing/Key Ingredients:**\n" +
-                                "[Mention main items needed]\n\n" +
-                                "**Cooking Instructions:**\n" +
-                                "[Detailed step-by-step guide, focusing on heat control, timing, and technique]\n\n" +
-                                "IMPORTANT: Direct cooking steps only. Do NOT include history, cultural background, or introduction."
-                    )
-                }
+                val prompt =
+                    "Create a practical cooking recipe for '$dishName'.\n" +
+                            "Strictly follow this format in English:\n\n" +
+                            "**Ingredients & Seasonings:**\n" +
+                            "[List detailed ingredients and seasonings with quantities]\n\n" +
+                            "**Missing/Key Ingredients:**\n" +
+                            "[Mention main items needed]\n\n" +
+                            "**Cooking Instructions:**\n" +
+                            "[Detailed step-by-step guide]\n\n" +
+                            "IMPORTANT: Direct cooking steps only. No introduction."
+
                 val response = generativeModel.generateContent(prompt)
                 response.text ?: "Could not generate recipe."
             } catch (e: Exception) {
-                "Network Error: ${e.message}"
+                Log.e("AIService", "Error in generateFullRecipe", e)
+                "Network Error: ${e.message ?: "Unknown error"}"
             }
         }
-    }
 
     /**
      * Recommend a recipe based on available ingredients
      */
-    suspend fun recommendSmartRecipe(inventory: List<String>): String {
-        return withContext(Dispatchers.IO) {
+    suspend fun recommendSmartRecipe(inventory: List<String>): String =
+        withContext(Dispatchers.IO) {
             try {
                 val items = inventory.joinToString(", ")
-                val prompt = content {
-                    text(
-                        "I have these ingredients: $items. \n" +
-                                "Task: Recommend ONE best dish I can make.\n" +
-                                "Strict Output Format (English):\n\n" +
-                                "**Dish Name:** [Name]\n\n" +
-                                "**Ingredients from My Fridge:**\n" +
-                                "[List items I already have]\n\n" +
-                                "**Missing Ingredients (Need to Buy):**\n" +
-                                "[List essential ingredients or seasonings I am likely missing]\n\n" +
-                                "**Cooking Instructions:**\n" +
-                                "[Detailed, practical step-by-step guide]\n\n" +
-                                "IMPORTANT: Direct cooking steps only. Do NOT include history, intro, or cultural background."
-                    )
-                }
+                Log.d("AIService", "Selected ingredients for AI: $inventory")
+
+                val prompt =
+                    "I have these ingredients: $items.\n" +
+                            "Task: Recommend ONE best dish I can make.\n\n" +
+                            "**Dish Name:** [Name]\n\n" +
+                            "**Ingredients from My Fridge:**\n" +
+                            "[List items I already have]\n\n" +
+                            "**Missing Ingredients:**\n" +
+                            "[List essential ingredients I may need]\n\n" +
+                            "**Cooking Instructions:**\n" +
+                            "[Detailed step-by-step guide]\n\n" +
+                            "IMPORTANT: Do NOT include introduction."
+
                 val response = generativeModel.generateContent(prompt)
-                response.text ?: "No recommendation available."
+
+                Log.d("AIService", "Raw AI response: ${response.text}")
+
+                // 如果 AI 返回 null 或空字符串，替换成提示
+                response.text?.takeIf { it.isNotBlank() } ?: "No recommendation available."
             } catch (e: Exception) {
-                "Network Error: ${e.message}"
+                Log.e("AIService", "Error in recommendSmartRecipe", e)
+                "Network Error: ${e.message ?: "Unknown error"}"
             }
         }
-    }
 }

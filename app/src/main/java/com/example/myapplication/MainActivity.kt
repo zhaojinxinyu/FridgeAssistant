@@ -5,6 +5,7 @@ import android.app.DatePickerDialog
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.BackHandler
@@ -55,7 +56,6 @@ import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 // Import new modules
-import com.example.myapplication.data.DBHelper
 import com.example.myapplication.data.FoodItem
 import com.example.myapplication.data.Recipe
 import com.example.myapplication.data.StorageArea
@@ -70,8 +70,8 @@ import com.example.myapplication.notification.ExpiryCheckWorker
 import com.example.myapplication.auth.User
 import com.example.myapplication.auth.UserPreferences
 import com.example.myapplication.ui.screens.LoginScreen
+import com.example.myapplication.data.FirebaseRepository
 
-const val TAG = "SmartFridgeApp"
 
 // --- Activity ---
 class MainActivity : AppCompatActivity() {
@@ -118,150 +118,173 @@ fun SmartFridgeApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
-    
+
     val userPreferences = remember { UserPreferences(context) }
     var currentUser by remember { mutableStateOf(userPreferences.getCurrentUser()) }
-    
-    // DBHelper is created with current user ID for data isolation
-    val dbHelper = remember(currentUser?.id) { 
-        DBHelper(context, currentUser?.id) 
+
+    // ------------------------------
+    // Firebase Repository (替代 DBHelper)
+    // ------------------------------
+    val repo = remember(currentUser?.id) {
+        currentUser?.id?.let { FirebaseRepository(it) }
     }
 
-    var foodList by remember(currentUser?.id) { mutableStateOf(dbHelper.getAllFoods().sortedBy { it.expiryDate }) }
-    var storageAreas by remember(currentUser?.id) { mutableStateOf(dbHelper.getAllAreas()) }
-    var savedRecipes by remember(currentUser?.id) { mutableStateOf(dbHelper.getAllRecipes()) }
-
-    fun refreshData() {
-        foodList = dbHelper.getAllFoods().sortedBy { it.expiryDate }
-        storageAreas = dbHelper.getAllAreas()
-        savedRecipes = dbHelper.getAllRecipes()
+    // ------------------------------
+    // Firebase 实时数据：Foods
+    // ------------------------------
+    var foodList by remember { mutableStateOf<List<FoodItem>>(emptyList()) }
+    LaunchedEffect(currentUser) {
+        currentUser?.let {
+            repo?.listenFoods { list ->
+                foodList = list.sortedBy { it.expiryDate }
+            }
+        }
     }
 
+    // ------------------------------
+    // Firebase 实时数据：Areas
+    // ------------------------------
+    var storageAreas by remember { mutableStateOf<List<StorageArea>>(emptyList()) }
+    LaunchedEffect(currentUser) {
+        currentUser?.let {
+            repo?.listenAreas { list ->
+                storageAreas = list
+            }
+        }
+    }
+
+    // ------------------------------
+    // Firebase 实时数据：Recipes
+    // ------------------------------
+    var savedRecipes by remember { mutableStateOf<List<Recipe>>(emptyList()) }
+    LaunchedEffect(currentUser) {
+        currentUser?.let {
+            repo?.listenRecipes { list ->
+                savedRecipes = list
+            }
+        }
+    }
+
+    // ------------------------------
+    // UI States
+    // ------------------------------
     var showEditDialog by remember { mutableStateOf(false) }
     var showBulkAddDialog by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf(FoodItem()) }
     var scannedItems by remember { mutableStateOf<List<FoodItem>>(emptyList()) }
     var isProcessing by remember { mutableStateOf(false) }
-    
-    // Delete confirmation state
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var itemToDelete by remember { mutableStateOf<FoodItem?>(null) }
-    
-    // Request notification permission on Android 13+
+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* Handle result if needed */ }
-    
+    ) {}
+
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
-    fun handleImage(uri: Uri) {
-        isProcessing = true
-        scope.launch {
-            try {
-                val image = InputImage.fromFilePath(context, uri)
-                val recognizer = TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
-                recognizer.process(image)
-                    .addOnSuccessListener { visionText ->
-                        scope.launch {
-                            val names = AIService.cleanReceiptData(visionText.text)
-                            isProcessing = false
-                            if (names.isNotEmpty()) {
-                                val defaultArea = if (storageAreas.isNotEmpty()) storageAreas[0].name else "Uncategorized"
-                                val defaultDate = LocalDate.now().plusDays(7).toString()
-                                scannedItems = names.map { FoodItem(name = it, area = defaultArea, expiryDate = defaultDate) }
-                                showBulkAddDialog = true
-                            } else {
-                                Toast.makeText(context, "No food found.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                    .addOnFailureListener {
-                        isProcessing = false
-                        Toast.makeText(context, "OCR Failed", Toast.LENGTH_SHORT).show()
-                    }
-            } catch (e: Exception) {
-                isProcessing = false
-            }
-        }
-    }
-
-    var tempUri by remember { mutableStateOf<Uri?>(null) }
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { if(it) tempUri?.let { uri -> handleImage(uri) } }
-    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { it?.let { uri -> handleImage(uri) } }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if(it) {
-        val file = File.createTempFile("scan", ".jpg", context.cacheDir)
-        tempUri = FileProvider.getUriForFile(context, "com.example.myapplication.provider", file)
-        cameraLauncher.launch(tempUri!!)
-    }}
-
-    // Show login screen if no user is logged in
+    // ------------------------------
+    // LOGIN
+    // ------------------------------
     if (currentUser == null) {
         LoginScreen(
             userPreferences = userPreferences,
-            onLoginSuccess = { user ->
-                currentUser = user
-            }
+            onLoginSuccess = { user -> currentUser = user }
         )
         return
     }
 
+    // ------------------------------
+    // MAIN SCAFFOLD
+    // ------------------------------
     Scaffold(
         bottomBar = { BottomNavigationBar(navController) }
     ) { padding ->
-        NavHost(navController, startDestination = "inventory", Modifier.padding(padding)) {
+
+        NavHost(navController, "inventory", Modifier.padding(padding)) {
+
+            // ---------------- INVENTORY ----------------
             composable("inventory") {
                 InventoryScreen(
                     foodList = foodList,
                     areas = storageAreas,
                     onAddClick = {
-                        val defaultArea = if (storageAreas.isNotEmpty()) storageAreas[0].name else "Other"
+                        val defaultArea = storageAreas.firstOrNull()?.name ?: "Other"
                         editingItem = FoodItem(area = defaultArea)
                         showEditDialog = true
                     },
-                    onCameraClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-                    onGalleryClick = { galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    onEditItem = { item -> editingItem = item; showEditDialog = true },
+                    onCameraClick = {},
+                    onGalleryClick = {},
+                    onEditItem = { item ->
+                        editingItem = item
+                        showEditDialog = true
+                    },
                     onDeleteItem = { item ->
                         itemToDelete = item
                         showDeleteConfirmation = true
                     }
                 )
             }
+
+            // ---------------- RECIPES ----------------
             composable("recipes") {
                 RecipeScreen(
                     foodList = foodList,
                     savedRecipes = savedRecipes,
+
+                    // FIXED: 使用 Firestore 保存 recipe
                     onSaveRecipe = { name ->
                         scope.launch {
                             isProcessing = true
                             val content = AIService.generateFullRecipe(name)
-                            dbHelper.addRecipe(Recipe(name = name, content = content))
-                            refreshData()
+
+                            repo?.addRecipe(
+                                Recipe(name = name, content = content)
+                            )
+
                             isProcessing = false
                         }
                     },
-                    onDeleteRecipe = { id -> dbHelper.deleteRecipe(id); refreshData() },
+
+                    // FIXED: 删除 recipe
+                    onDeleteRecipe = { id ->
+                        repo?.deleteRecipe(id)
+                    },
+
                     navController = navController
                 )
             }
-            composable("recipe_detail/{recipeId}") { backStackEntry ->
-                val recipeId = backStackEntry.arguments?.getString("recipeId")
-                val recipe = savedRecipes.find { it.id == recipeId }
-                if (recipe != null) {
-                    RecipeDetailScreen(recipe) { navController.popBackStack() }
-                }
+
+            // ---------------- RECIPE DETAIL ----------------
+            composable("recipe_detail/{recipeId}") { entry ->
+                val recipe = savedRecipes.find { it.id == entry.arguments?.getString("recipeId") }
+                if (recipe != null) RecipeDetailScreen(recipe) { navController.popBackStack() }
             }
+
+            // ---------------- SETTINGS ----------------
             composable("settings") {
                 SettingsScreen(
                     currentUser = currentUser,
                     areas = storageAreas,
-                    onAddArea = { name -> dbHelper.addArea(StorageArea(name = name)); refreshData() },
-                    onUpdateArea = { area -> dbHelper.updateArea(area); refreshData() },
-                    onDeleteArea = { id -> dbHelper.deleteArea(id); refreshData() },
+
+                    // FIXED: Firestore create area
+                    onAddArea = { name ->
+                        repo?.addArea(StorageArea(name = name))
+                    },
+
+                    // FIXED: Firestore update area
+                    onUpdateArea = { area ->
+                        repo?.updateArea(area)
+                    },
+
+                    // FIXED: Firestore delete area
+                    onDeleteArea = { id ->
+                        repo?.deleteArea(id)
+                    },
+
                     onLogout = {
                         userPreferences.logout()
                         currentUser = null
@@ -270,43 +293,53 @@ fun SmartFridgeApp() {
             }
         }
 
+        // ------------------------------
+        // EDIT ITEM DIALOG
+        // ------------------------------
         if (showEditDialog) {
             EditItemDialog(
                 item = editingItem,
                 areas = storageAreas,
                 onDismiss = { showEditDialog = false },
+
+                // FIXED: Firestore save food
                 onSave = { item ->
-                    dbHelper.addFood(item)
-                    refreshData()
+                    repo?.addOrUpdateFood(item)
                     showEditDialog = false
                     Toast.makeText(context, "Saved!", Toast.LENGTH_SHORT).show()
                 }
             )
         }
 
+        // ------------------------------
+        // BULK ADD (FIXED)
+        // ------------------------------
         if (showBulkAddDialog) {
             BulkAddDialog(
                 initialItems = scannedItems,
                 areas = storageAreas,
                 onDismiss = { showBulkAddDialog = false },
-                onSave = { itemsToSave ->
-                    itemsToSave.forEach { item -> dbHelper.addFood(item) }
-                    refreshData()
+
+                // FIXED: Firestore bulk insert
+                onSave = { items ->
+                    items.forEach { food -> repo?.addOrUpdateFood(food) }
                     showBulkAddDialog = false
-                    Toast.makeText(context, "Saved ${itemsToSave.size} items!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Saved ${items.size} items!", Toast.LENGTH_SHORT).show()
                 }
             )
         }
-        
-        // Delete confirmation dialog
+
+        // ------------------------------
+        // DELETE CONFIRMATION
+        // ------------------------------
         if (showDeleteConfirmation && itemToDelete != null) {
             DeleteConfirmationDialog(
                 itemName = itemToDelete?.name,
                 onConfirm = {
                     itemToDelete?.let { item ->
-                        dbHelper.deleteFood(item.id)
-                        refreshData()
-                        Toast.makeText(context, "Deleted", Toast.LENGTH_SHORT).show()
+                        repo?.deleteFood(item.id)
+                        showDeleteConfirmation = false
+                        Toast.makeText(context, "Deleted!", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onDismiss = {
@@ -317,18 +350,23 @@ fun SmartFridgeApp() {
         }
 
         if (isProcessing) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(0.5f)), contentAlignment = Alignment.Center) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            Box(
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Card {
+                    Row(Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator()
                         Spacer(Modifier.width(16.dp))
-                        Text("Processing...", style = MaterialTheme.typography.bodyLarge)
+                        Text("Processing…")
                     }
                 }
             }
         }
     }
 }
+
 
 // --- Inventory Screen with Search ---
 @OptIn(ExperimentalMaterial3Api::class)
@@ -444,16 +482,8 @@ fun InventoryScreen(
                 title = { Text("Add Food") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { showAddOptions = false; onCameraClick() }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) {
-                            Icon(Icons.Default.CameraAlt, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Scan Receipt")
-                        }
-                        Button(onClick = { showAddOptions = false; onGalleryClick() }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
-                            Icon(Icons.Default.Image, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("From Gallery")
-                        }
+
+
                         OutlinedButton(onClick = { showAddOptions = false; onAddClick() }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) {
                             Icon(Icons.Default.Edit, null)
                             Spacer(Modifier.width(8.dp))
@@ -538,6 +568,11 @@ fun RecipeScreen(
 ) {
     var dishName by remember { mutableStateOf("") }
     var aiSmartResult by remember { mutableStateOf<String?>(null) }
+
+    var showIngredientSelector by remember { mutableStateOf(false) }
+
+    var selectedIngredients by remember { mutableStateOf(listOf<String>()) }
+
     val scope = rememberCoroutineScope()
     var isThinking by remember { mutableStateOf(false) }
 
@@ -578,14 +613,8 @@ fun RecipeScreen(
         }
 
         // Smart Suggest
-        FilledTonalButton(
-            onClick = {
-                isThinking = true
-                scope.launch {
-                    aiSmartResult = AIService.recommendSmartRecipe(foodList.map { it.name })
-                    isThinking = false
-                }
-            },
+        FilledTonalButton(//change_1//
+            onClick = { showIngredientSelector = true },
             modifier = Modifier.fillMaxWidth().height(56.dp),
             shape = RoundedCornerShape(12.dp)
         ) {
@@ -651,6 +680,74 @@ fun RecipeScreen(
                 }
             }
         }
+        //change_2//
+        // --- Ingredient Selector Dialog ---
+        if (showIngredientSelector) {
+            AlertDialog(
+                onDismissRequest = { showIngredientSelector = false },
+                title = { Text("Select Ingredients") },
+                text = {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        foodList.forEach { item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedIngredients =
+                                            if (selectedIngredients.contains(item.name))
+                                                selectedIngredients - item.name
+                                            else
+                                                selectedIngredients + item.name
+                                    }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = selectedIngredients.contains(item.name),
+                                    onCheckedChange = {
+                                        selectedIngredients =
+                                            if (selectedIngredients.contains(item.name))
+                                                selectedIngredients - item.name
+                                            else
+                                                selectedIngredients + item.name
+                                    }
+                                )
+                                Text(item.name)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showIngredientSelector = false
+                            isThinking = true
+
+                            // change3
+                            val inputList =
+                                if (selectedIngredients.isEmpty()) {
+                                    foodList.map { it.name }     // All ingredients are used by default
+                                } else {
+                                    selectedIngredients.toList() // Otherwise, use the ingredients selected by the user
+                                }
+                            Log.d("RecipeScreen", "Selected ingredients for AI: $inputList")
+                            scope.launch {
+                                aiSmartResult = AIService.recommendSmartRecipe(inputList)
+                                isThinking = false
+                            }
+                        }
+                    ) {
+                        Text("OK")
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showIngredientSelector = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+        //change_2 over//
     }
 }
 
