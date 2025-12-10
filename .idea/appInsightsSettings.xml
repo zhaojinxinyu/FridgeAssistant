@@ -9,9 +9,9 @@
               <option name="connection">
                 <ConnectionSetting>
                   <option name="appId" value="com.example.myapplication" />
-                  <option name="mobileSdkAppId" value="1:550392375318:android:2febe226684ed578a0ed37" />
-                  <option name="projectId" value="smartfridge-b7a65" />
-                  <option name="projectNumber" value="550392375318" />
+                  <option name="mobileSdkAppId" value="1:986106525404:android:ab4f38d05da22716066619" />
+                  <option name="projectId" value="fridge-795e2" />
+                  <option name="projectNumber" value="986106525404" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />

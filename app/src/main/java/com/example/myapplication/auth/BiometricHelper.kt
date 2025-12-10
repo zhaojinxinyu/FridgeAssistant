@@ -6,11 +6,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 
-/**
- * Helper class for biometric and device credential authentication
- * Supports fingerprint, face recognition, PIN, pattern, and password
- * Compatible with Android 8.0+ (API 26+)
- */
+
 class BiometricHelper(private val activity: FragmentActivity) {
     
     private val biometricManager: BiometricManager? = try {
@@ -20,12 +16,6 @@ class BiometricHelper(private val activity: FragmentActivity) {
     }
     
     companion object {
-        /**
-         * Get appropriate authenticators based on Android version
-         * - API 30+: BIOMETRIC_STRONG | BIOMETRIC_WEAK | DEVICE_CREDENTIAL
-         * - API 28-29: BIOMETRIC_WEAK | DEVICE_CREDENTIAL  
-         * - API 26-27: BIOMETRIC_WEAK only (DEVICE_CREDENTIAL not supported)
-         */
         fun getAuthenticators(): Int {
             return when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
