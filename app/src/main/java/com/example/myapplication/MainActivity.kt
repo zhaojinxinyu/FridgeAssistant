@@ -123,14 +123,14 @@ fun SmartFridgeApp() {
     var currentUser by remember { mutableStateOf(userPreferences.getCurrentUser()) }
 
     // ------------------------------
-    // Firebase Repository
+    // Firebase Repository (替代 DBHelper)
     // ------------------------------
     val repo = remember(currentUser?.id) {
         currentUser?.id?.let { FirebaseRepository(it) }
     }
 
     // ------------------------------
-    // Firebase
+    // Firebase 实时数据：Foods
     // ------------------------------
     var foodList by remember { mutableStateOf<List<FoodItem>>(emptyList()) }
     LaunchedEffect(currentUser) {
@@ -142,7 +142,7 @@ fun SmartFridgeApp() {
     }
 
     // ------------------------------
-    // Firebase
+    // Firebase 实时数据：Areas
     // ------------------------------
     var storageAreas by remember { mutableStateOf<List<StorageArea>>(emptyList()) }
     LaunchedEffect(currentUser) {
@@ -154,7 +154,7 @@ fun SmartFridgeApp() {
     }
 
     // ------------------------------
-    // Firebase
+    // Firebase 实时数据：Recipes
     // ------------------------------
     var savedRecipes by remember { mutableStateOf<List<Recipe>>(emptyList()) }
     LaunchedEffect(currentUser) {
@@ -401,7 +401,7 @@ fun InventoryScreen(
         Column {
             // Modern Header
             CenterAlignedTopAppBar(
-                title = { Text("Refrigerator Inventory", fontWeight = FontWeight.Bold) },
+                title = { Text("Inventory", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 actions = {
                     IconButton(onClick = { showAddOptions = true }) {
