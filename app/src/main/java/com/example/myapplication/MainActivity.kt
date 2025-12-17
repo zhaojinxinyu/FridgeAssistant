@@ -401,7 +401,7 @@ fun InventoryScreen(
         Column {
             // Modern Header
             CenterAlignedTopAppBar(
-                title = { Text("Inventory", fontWeight = FontWeight.Bold) },
+                title = { Text("Refrigerator Inventory", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 actions = {
                     IconButton(onClick = { showAddOptions = true }) {
