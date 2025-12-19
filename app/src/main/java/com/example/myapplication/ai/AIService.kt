@@ -1,6 +1,7 @@
 package com.example.myapplication.ai
 
 import android.util.Log
+
 import com.example.myapplication.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
 import kotlinx.coroutines.Dispatchers
